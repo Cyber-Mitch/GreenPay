@@ -161,7 +161,27 @@ never combined. See [impact accounting](impact-accounting.md).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/updates/:projectId` | Updates posted by a project |
+| GET | `/api/v1/updates/:projectId` | Public and public-under-review updates posted by a project |
+| POST | `/api/v1/updates` | Create an update; review mode follows project trust and notifications wait for approval |
+| PATCH | `/api/v1/updates/:updateId` | Edit an update, retain the previous revision, and return the edit to review |
+| GET | `/api/v1/updates/:updateId/history` | Donor-visible history of earlier public revisions |
+| POST | `/api/v1/updates/:updateId/reports` | Donor: report an update (`donorAddress`, fixed `reason`, optional `details`) |
+| GET | `/api/v1/updates/:updateId/reports` | Admin: inspect report reasons, details, and resolutions |
+| GET | `/api/v1/updates/moderation/queue` | Admin: pending, public-under-review, and appealed updates |
+| POST | `/api/v1/updates/:updateId/moderation` | Admin: `approve`, `reject`, `remove`, or `reinstate` with a reason |
+| GET | `/api/v1/updates/:updateId/moderation-history` | Admin: immutable actor/reason lifecycle audit |
+| POST | `/api/v1/updates/:updateId/appeals` | Project admin: appeal a rejected or removed update |
+| GET | `/api/v1/updates/moderation/appeals` | Admin: pending appeal queue |
+| POST | `/api/v1/updates/appeals/:appealId/decision` | Different moderator: grant or deny an appeal with a reason |
+| POST | `/api/v1/updates/:updateId/notifications/retry` | Admin: queue only publication channels not previously handed off |
+
+New standard-project updates use pre-publication review. Fully verified
+projects are visible during post-publication review, with a label. Email and
+push always wait for approval. Reports are restricted to project donors,
+rate-limited, deduplicated, and never remove content automatically. See the
+[project update content and moderation policy](project-update-moderation.md)
+for applicable rules, lifecycle, evidence standard, appeals, edit history, and
+the required follow-up when notified content is removed.
 
 ---
 
