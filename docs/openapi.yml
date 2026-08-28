@@ -400,6 +400,7 @@ components:
 
     ProjectUpdate:
       type: object
+      required: [id, projectId, title, body, createdAt, revision, moderationStatus, isEdited, underReview]
       properties:
         id:
           type: string
@@ -414,6 +415,27 @@ components:
         createdAt:
           type: string
           format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revision:
+          type: integer
+          minimum: 1
+        moderationStatus:
+          type: string
+          description: >-
+            Public responses contain published or published_pending_review.
+            Administrative mutation responses may contain any lifecycle state.
+          enum: [pending, published_pending_review, published, rejected, removed, appealed]
+        isEdited:
+          type: boolean
+        underReview:
+          type: boolean
         sourceLanguage: { type: string, enum: [en, es, ar] }
         contentLanguage: { type: string, enum: [en, es, ar] }
         contentDirection: { type: string, enum: [ltr, rtl] }
@@ -2032,7 +2054,11 @@ paths:
   /api/v1/updates:
     post:
       tags: [Updates]
-      summary: Post a project update (admin)
+      summary: Submit a project update for the trust-based moderation flow (admin)
+      description: >-
+        Standard projects enter pending pre-publication review. Fully verified
+        projects enter published_pending_review and are visible immediately.
+        Email and push notifications are held until approval in both modes.
       operationId: createProjectUpdate
       parameters:
         - name: x-admin-key
@@ -2061,7 +2087,7 @@ paths:
                   default: en
       responses:
         '201':
-          description: Update created and subscribers notified
+          description: Update created; subscriber notifications remain held until approval
           content:
             application/json:
               schema:
@@ -2089,6 +2115,201 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /api/v1/updates/{updateId}:
+    patch:
+      tags: [Updates]
+      summary: Edit an update and retain the previous revision
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [editReason]
+              properties:
+                title: { type: string, maxLength: 200 }
+                body: { type: string, maxLength: 20000 }
+                editReason: { type: string, minLength: 5, maxLength: 1000 }
+      responses:
+        '200': { description: Updated revision is pending review; prior public snapshot retained }
+        '409': { description: Moderation decision must be resolved before editing }
+
+  /api/v1/updates/{updateId}/history:
+    get:
+      tags: [Updates]
+      summary: Read earlier donor-visible revisions
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Prior public snapshots that remain suitable for display }
+
+  /api/v1/updates/{updateId}/reports:
+    get:
+      tags: [Updates]
+      summary: Inspect reports and resolutions for an update
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Chronological report records for moderator review }
+    post:
+      tags: [Updates]
+      summary: Report a public update as a donor to its project
+      description: >-
+        One report per donor and update. Reports are rate-limited and enter a
+        review queue; report volume never removes content automatically.
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [donorAddress, reason]
+              properties:
+                donorAddress: { type: string }
+                reason:
+                  type: string
+                  enum: [fraudulent_claim, abuse, spam, off_topic_solicitation, dangerous_content, privacy, other]
+                details: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Report recorded for review }
+        '403': { description: Address has no committed donation to the project }
+        '409': { description: Donor already reported this update }
+
+  /api/v1/updates/moderation/queue:
+    get:
+      tags: [Updates]
+      summary: List updates requiring moderation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, published_pending_review, appealed] }
+      responses:
+        '200': { description: Queue ordered by open report count then age }
+
+  /api/v1/updates/{updateId}/moderation:
+    post:
+      tags: [Updates]
+      summary: Record a reasoned moderation decision
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [approve, reject, remove, reinstate] }
+                reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '200': { description: Decision and immutable actor/reason event recorded }
+        '409': { description: Action is invalid from the current lifecycle state }
+
+  /api/v1/updates/{updateId}/moderation-history:
+    get:
+      tags: [Updates]
+      summary: Read the actor/reason moderation audit trail
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Chronological immutable moderation events }
+
+  /api/v1/updates/{updateId}/appeals:
+    post:
+      tags: [Updates]
+      summary: Appeal a rejected or removed update
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 20, maxLength: 3000 }
+      responses:
+        '201': { description: Appeal queued for a different moderator }
+        '409': { description: Update is not appealable or already has a pending appeal }
+
+  /api/v1/updates/moderation/appeals:
+    get:
+      tags: [Updates]
+      summary: List pending project update appeals
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Oldest pending appeals first }
+
+  /api/v1/updates/appeals/{appealId}/decision:
+    post:
+      tags: [Updates]
+      summary: Grant or deny an appeal as a different moderator
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: appealId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome, reason]
+              properties:
+                outcome: { type: string, enum: [granted, denied] }
+                reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '200': { description: Appeal decision recorded }
+        '409': { description: Appeal already decided or same actor attempted review }
+
+  /api/v1/updates/{updateId}/notifications/retry:
+    post:
+      tags: [Updates]
+      summary: Retry only publication channels that have not accepted the event
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Missing notification channels queued }
 
   /api/v1/updates/{updateId}/translations/{language}:
     put:

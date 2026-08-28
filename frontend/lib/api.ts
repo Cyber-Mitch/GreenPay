@@ -8,6 +8,8 @@ import type {
   DonorProfile,
   FreelancerProfile,
   ProjectUpdate,
+  ProjectUpdateHistory,
+  ProjectUpdateReportReason,
   ProjectVerificationApplication,
   ProjectVerificationStatus,
   ProjectVerificationStatusResponse,
@@ -612,6 +614,30 @@ export async function createProjectUpdate(payload: {
   const { data } = await api.post<ProjectUpdate>(
     "/api/updates",
     payload,
+  );
+  return data;
+}
+
+export async function fetchProjectUpdateHistory(updateId: string) {
+  const { data } = await api.get<ProjectUpdateHistory>(
+    `/api/updates/${updateId}/history`,
+  );
+  return data;
+}
+
+export async function reportProjectUpdate(payload: {
+  updateId: string;
+  donorAddress: string;
+  reason: ProjectUpdateReportReason;
+  details?: string;
+}) {
+  const { data } = await api.post<{ id: string; status: "open"; message: string }>(
+    `/api/updates/${payload.updateId}/reports`,
+    {
+      donorAddress: payload.donorAddress,
+      reason: payload.reason,
+      details: payload.details,
+    },
   );
   return data;
 }

@@ -360,6 +360,159 @@ CREATE TABLE IF NOT EXISTS project_updates (
 
 ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS source_language TEXT NOT NULL DEFAULT 'en';
 
+-- Existing rows pre-date moderation and were already donor-visible. Mark them
+-- published on first migration, then use pending as the default for all future
+-- inserts so a route omission can never publish unreviewed content.
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'published';
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS moderation_reason TEXT;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS moderation_actor TEXT;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS moderation_updated_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS email_notified_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS push_notified_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS removal_email_notified_at TIMESTAMPTZ;
+ALTER TABLE project_updates ADD COLUMN IF NOT EXISTS removal_push_notified_at TIMESTAMPTZ;
+UPDATE project_updates
+SET published_at = COALESCE(published_at, created_at)
+WHERE moderation_status = 'published' AND published_at IS NULL;
+ALTER TABLE project_updates ALTER COLUMN moderation_status SET DEFAULT 'pending';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'project_updates_moderation_status_check'
+  ) THEN
+    ALTER TABLE project_updates
+      ADD CONSTRAINT project_updates_moderation_status_check
+      CHECK (moderation_status IN (
+        'pending', 'published_pending_review', 'published', 'rejected', 'removed', 'appealed'
+      ));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_project_updates_public_feed
+  ON project_updates(project_id, created_at DESC, id DESC)
+  WHERE moderation_status IN ('published', 'published_pending_review');
+
+CREATE INDEX IF NOT EXISTS idx_project_updates_moderation_queue
+  ON project_updates(moderation_status, moderation_updated_at, created_at);
+
+CREATE TABLE IF NOT EXISTS project_update_revisions (
+  id UUID PRIMARY KEY,
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  source_language TEXT NOT NULL,
+  moderation_status TEXT NOT NULL,
+  was_public BOOLEAN NOT NULL DEFAULT FALSE,
+  content_visible BOOLEAN NOT NULL DEFAULT TRUE,
+  edited_by TEXT NOT NULL,
+  edit_reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(update_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_update_revisions_history
+  ON project_update_revisions(update_id, revision DESC);
+
+CREATE TABLE IF NOT EXISTS project_update_moderation_events (
+  id UUID PRIMARY KEY,
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  actor_type TEXT NOT NULL CHECK (actor_type IN ('project_admin', 'moderator', 'system')),
+  action TEXT NOT NULL CHECK (action IN (
+    'created', 'edited', 'approved', 'rejected', 'removed', 'reinstated',
+    'appealed', 'appeal_granted', 'appeal_denied'
+  )),
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_update_moderation_events_audit
+  ON project_update_moderation_events(update_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS project_update_reports (
+  id UUID PRIMARY KEY,
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  reporter_address TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN (
+    'fraudulent_claim', 'abuse', 'spam', 'off_topic_solicitation',
+    'dangerous_content', 'privacy', 'other'
+  )),
+  details TEXT,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'reviewed', 'dismissed', 'actioned')),
+  reviewed_by TEXT,
+  reviewed_at TIMESTAMPTZ,
+  resolution TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(update_id, reporter_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_update_reports_queue
+  ON project_update_reports(status, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS project_update_appeals (
+  id UUID PRIMARY KEY,
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  filed_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  prior_status TEXT NOT NULL CHECK (prior_status IN ('rejected', 'removed')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'granted', 'denied')),
+  decided_by TEXT,
+  decision_reason TEXT,
+  decided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_update_appeals_one_pending
+  ON project_update_appeals(update_id) WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_project_update_appeals_queue
+  ON project_update_appeals(status, created_at ASC);
+
+-- Exact email recipient snapshot for irrevocable update delivery. Corrections
+-- use this list rather than today's subscribers, so an unsubscribe after the
+-- original message does not prevent a necessary moderation follow-up and a
+-- later subscriber never receives a correction for content they did not see.
+CREATE TABLE IF NOT EXISTS project_update_email_recipients (
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  language TEXT NOT NULL CHECK (language IN ('en', 'es', 'ar')),
+  project_name TEXT NOT NULL,
+  update_title TEXT NOT NULL,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  correction_queued_at TIMESTAMPTZ,
+  PRIMARY KEY(update_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_update_email_corrections
+  ON project_update_email_recipients(update_id, email)
+  WHERE correction_queued_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS project_update_push_recipients (
+  update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
+  token TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  correction_queued_at TIMESTAMPTZ,
+  PRIMARY KEY(update_id, token)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_update_push_corrections
+  ON project_update_push_recipients(update_id, token)
+  WHERE correction_queued_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS project_update_translations (
   id UUID PRIMARY KEY,
   update_id UUID NOT NULL REFERENCES project_updates(id) ON DELETE CASCADE,
