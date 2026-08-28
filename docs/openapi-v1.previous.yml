@@ -1,11 +1,7 @@
 openapi: 3.0.3
 info:
   title: Stellar GreenPay API
-  version: 1.1.0
-  x-api-version: v1
-  x-lifecycle-status: stable
-  x-version-policy: ./api-versioning-policy.md
-  x-changelog: /api/versions/changelog
+  version: 1.0.0
   description: |
     REST API for the Stellar GreenPay climate donation platform.
     Every donation is recorded on the Stellar blockchain via Soroban smart contracts.
@@ -14,9 +10,6 @@ info:
     `{ success: false, error: { code, message, details? } }`. The unversioned
     `/api/*` paths are legacy aliases that redirect to `/api/v1/*`; clients
     should migrate to `/api/v1/*` and branch on `error.code`, never message text.
-    Clients MUST ignore unknown response fields. Send `X-Client-Name`,
-    `X-Client-Version`, and `X-Client-API-Version` on every request so support
-    and sunset decisions can be made from observed adoption.
   license:
     name: MIT
 
@@ -24,31 +17,8 @@ servers:
   - url: http://localhost:4000
     description: Local development
 
-x-api-lifecycle:
-  discovery: /api/versions
-  compatibilityBaseline: ./openapi-v1.previous.yml
-  stableVersion: v1
-  legacyUnversioned:
-    deprecated: true
-    successor: /api/v1
-    sunset: '2030-12-31T23:59:59.000Z'
-    usageGated: true
-  clientHeaders:
-    name: X-Client-Name
-    version: X-Client-Version
-    supportedApi: X-Client-API-Version
-
-# The baseline predates correction of its documented `/api/*` aliases to the
-# actual stable `/api/v1/*` paths. The compatibility checker applies this
-# one-time documentation alias before comparing operations and schemas.
-x-compatibility:
-  pathAliases:
-    - from: /api/
-      to: /api/v1/
-
 tags:
   - name: Health
-  - name: Lifecycle
   - name: Projects
   - name: Donations
   - name: Profiles
@@ -725,285 +695,14 @@ components:
       schema:
         type: string
         example: GABC...XYZ
-    ClientNameHeader:
-      name: X-Client-Name
-      in: header
-      required: false
-      description: Stable client family such as web, mobile, or extension.
-      schema:
-        type: string
-        maxLength: 64
-    ClientVersionHeader:
-      name: X-Client-Version
-      in: header
-      required: false
-      description: Installed client release used to measure adoption.
-      schema:
-        type: string
-        maxLength: 64
-    ClientApiVersionHeader:
-      name: X-Client-API-Version
-      in: header
-      required: false
-      description: Highest major API version the client was built to understand.
-      schema:
-        type: string
-        maxLength: 64
 
   headers:
     AdminKey:
       description: Admin API key (only required when ADMIN_API_KEY env var is set)
       schema:
         type: string
-    ApiVersion:
-      description: Major API version that produced the representation.
-      schema:
-        type: string
-        example: '1'
-    Deprecation:
-      description: True when the requested route is deprecated.
-      schema:
-        type: string
-        enum: ['true']
-    Sunset:
-      description: Earliest HTTP-date after which the deprecated route may be retired, subject to the documented usage gates.
-      schema:
-        type: string
-        example: Tue, 31 Dec 2030 23:59:59 GMT
-    SuccessorLink:
-      description: Links to the successor version and machine-readable deprecation changelog.
-      schema:
-        type: string
-
-    CorrelationId:
-      description: Request correlation identifier returned by the service.
-      schema:
-        type: string
-
-  responses:
-    BadRequest:
-      description: Request validation failed
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Unauthorized:
-      description: Authentication is missing, expired, or invalid
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
 
 paths:
-  # ── Lifecycle and version discovery ────────────────────────────────────────
-  /api/versions:
-    get:
-      tags: [Lifecycle]
-      summary: Discover supported API versions and the legacy removal gates
-      operationId: getApiVersions
-      x-version-neutral: true
-      responses:
-        '200':
-          description: Machine-readable API lifecycle state
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/CorrelationId'
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Success'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [current, policy, changelog, versions, legacy]
-                        properties:
-                          current: { type: string, enum: [v1] }
-                          policy: { type: string }
-                          changelog: { type: string }
-                          versions:
-                            type: array
-                            items:
-                              type: object
-                              required: [version, status, basePath, deprecated]
-                              properties:
-                                version: { type: string }
-                                status: { type: string, enum: [stable, experimental, deprecated] }
-                                basePath: { type: string }
-                                introducedAt: { type: string, format: date }
-                                deprecated: { type: boolean }
-                                sunset: { type: string, format: date-time, nullable: true }
-                          legacy:
-                            type: object
-                            required: [basePath, status, successor, sunset, removalGates]
-                            properties:
-                              basePath: { type: string, enum: [/api] }
-                              status: { type: string, enum: [deprecated] }
-                              successor: { type: string, enum: [/api/v1] }
-                              sunset: { type: string, format: date-time }
-                              commitment: { type: string }
-                              removalGates: { type: object, additionalProperties: true }
-
-  /api/versions/changelog:
-    get:
-      tags: [Lifecycle]
-      summary: Read API lifecycle announcements
-      operationId: getApiChangelog
-      x-version-neutral: true
-      responses:
-        '200':
-          description: Ordered compatibility, preview, and deprecation notices
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Success'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [entries]
-                        properties:
-                          entries:
-                            type: array
-                            items:
-                              type: object
-                              required: [date, version, kind, summary]
-                              properties:
-                                date: { type: string, format: date }
-                                version: { type: string }
-                                kind: { type: string }
-                                summary: { type: string }
-
-  /api/v1/meta:
-    get:
-      tags: [Lifecycle]
-      summary: Read stable v1 service metadata
-      operationId: getV1Meta
-      x-api-version: v1
-      responses:
-        '200':
-          description: Flat v1 service metadata representation
-          headers:
-            X-API-Version:
-              $ref: '#/components/headers/ApiVersion'
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Success'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [name, version, environment, network, node, uptimeSeconds, timestamp]
-                        additionalProperties: true
-
-  /api/v1/admin/api-usage:
-    get:
-      tags: [Admin, Lifecycle]
-      summary: Inspect the current process API adoption aggregate
-      operationId: getApiUsage
-      x-api-version: v1
-      description: >-
-        Authenticated operational view. Durable deprecation evidence is formed
-        by aggregating structured log records where `event=api_request` across
-        every replica and day in the observation window.
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Usage series grouped by endpoint, API version, client, and client release
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Success'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [scope, startedAt, generatedAt, durableSource, series]
-                        properties:
-                          scope: { type: string, enum: [process] }
-                          startedAt: { type: string, format: date-time }
-                          generatedAt: { type: string, format: date-time }
-                          durableSource: { type: string }
-                          series:
-                            type: array
-                            items:
-                              type: object
-                              required: [apiVersion, requestedVersion, clientName, clientVersion, clientApiVersion, method, endpoint, statusCode, deprecated, count]
-                              properties:
-                                apiVersion: { type: string, nullable: true }
-                                requestedVersion: { type: string }
-                                clientName: { type: string }
-                                clientVersion: { type: string }
-                                clientApiVersion: { type: string }
-                                method: { type: string }
-                                endpoint: { type: string }
-                                statusCode: { type: integer }
-                                deprecated: { type: boolean }
-                                count: { type: integer }
-                                firstSeenAt: { type: string, format: date-time }
-                                lastSeenAt: { type: string, format: date-time }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /api/v2/meta:
-    get:
-      tags: [Lifecycle]
-      summary: Read the experimental v2 service metadata representation
-      operationId: getV2Meta
-      x-api-version: v2
-      x-lifecycle-status: experimental
-      responses:
-        '200':
-          description: Nested v2 representation adapted from the shared metadata domain result
-          headers:
-            X-API-Version:
-              $ref: '#/components/headers/ApiVersion'
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Success'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [service, runtime, api]
-                        properties:
-                          service: { type: object, additionalProperties: true }
-                          runtime: { type: object, additionalProperties: true }
-                          api: { type: object, additionalProperties: true }
-
-  /api/projects:
-    get:
-      tags: [Lifecycle]
-      summary: Deprecated unversioned project-list redirect
-      operationId: redirectLegacyProjects
-      deprecated: true
-      x-api-version: legacy
-      x-sunset: '2030-12-31T23:59:59.000Z'
-      externalDocs:
-        description: API deprecation changelog
-        url: /api/versions/changelog
-      responses:
-        '308':
-          description: Method-preserving redirect to `/api/v1/projects`
-          headers:
-            Deprecation:
-              $ref: '#/components/headers/Deprecation'
-            Sunset:
-              $ref: '#/components/headers/Sunset'
-            Link:
-              $ref: '#/components/headers/SuccessorLink'
-            Location:
-              description: Versioned successor URL.
-              schema: { type: string, example: /api/v1/projects }
-
   # ── Health ──────────────────────────────────────────────────────────────────
   /health:
     get:
@@ -1032,7 +731,7 @@ paths:
                     type: object
 
   # ── Projects ─────────────────────────────────────────────────────────────────
-  /api/v1/projects:
+  /api/projects:
     get:
       tags: [Projects]
       summary: List projects
@@ -1086,7 +785,7 @@ paths:
                       meta:
                         $ref: '#/components/schemas/ProjectListMeta'
 
-  /api/v1/projects/featured:
+  /api/projects/featured:
     get:
       tags: [Projects]
       summary: Get featured project
@@ -1117,7 +816,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/admin/register:
+  /api/projects/admin/register:
     post:
       tags: [Projects]
       summary: Build on-chain project registration XDR
@@ -1162,7 +861,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/admin/confirm:
+  /api/projects/admin/confirm:
     post:
       tags: [Projects]
       summary: Confirm on-chain project registration
@@ -1192,7 +891,7 @@ paths:
                       data:
                         $ref: '#/components/schemas/Project'
 
-  /api/v1/projects/{id}:
+  /api/projects/{id}:
     get:
       tags: [Projects]
       summary: Get project by ID
@@ -1241,7 +940,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/translations/{language}:
+  /api/projects/{id}/translations/{language}:
     put:
       tags: [Projects]
       summary: Create or replace a pending project translation without changing the original
@@ -1271,7 +970,7 @@ paths:
       responses:
         '201': { description: Translation saved in pending moderation }
 
-  /api/v1/projects/{id}/translations/{language}/moderation:
+  /api/projects/{id}/translations/{language}/moderation:
     patch:
       tags: [Projects]
       summary: Moderate project translation content
@@ -1297,7 +996,7 @@ paths:
         '200': { description: Translation moderation state updated }
         '400': { description: Human impact-claim review is required before approving machine translation }
 
-  /api/v1/projects/{id}/status:
+  /api/projects/{id}/status:
     patch:
       tags: [Projects]
       summary: Update project status
@@ -1344,7 +1043,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/verify:
+  /api/projects/{id}/verify:
     get:
       tags: [Projects]
       summary: Verify project on-chain
@@ -1374,7 +1073,7 @@ paths:
                           totalRaisedOnChain:
                             type: string
 
-  /api/v1/projects/{id}/campaigns:
+  /api/projects/{id}/campaigns:
     get:
       tags: [Projects]
       summary: List campaigns for a project
@@ -1455,7 +1154,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/milestones:
+  /api/projects/{id}/milestones:
     get:
       tags: [Projects]
       summary: List milestones for a project
@@ -1517,7 +1216,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/milestones/{milestoneId}/reach:
+  /api/projects/{id}/milestones/{milestoneId}/reach:
     post:
       tags: [Projects]
       summary: Mark a milestone as reached
@@ -1559,7 +1258,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/matching:
+  /api/projects/{id}/matching:
     get:
       tags: [Projects]
       summary: List active donation matches for a project
@@ -1631,7 +1330,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/projects/{id}/generate-summary:
+  /api/projects/{id}/generate-summary:
     post:
       tags: [Projects]
       summary: Generate AI impact summary for a project
@@ -1697,7 +1396,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Donations ────────────────────────────────────────────────────────────────
-  /api/v1/donations:
+  /api/donations:
     post:
       tags: [Donations]
       summary: Record a donation
@@ -1758,7 +1457,7 @@ paths:
         '429':
           description: Rate limit exceeded
 
-  /api/v1/donations/project/{projectId}:
+  /api/donations/project/{projectId}:
     get:
       tags: [Donations]
       summary: List donations for a project
@@ -1796,7 +1495,7 @@ paths:
                         format: date-time
                         nullable: true
 
-  /api/v1/donations/project/{projectId}/messages:
+  /api/donations/project/{projectId}/messages:
     get:
       tags: [Donations]
       summary: List donations with messages for a project
@@ -1830,7 +1529,7 @@ paths:
                         items:
                           $ref: '#/components/schemas/Donation'
 
-  /api/v1/donations/donor/{publicKey}:
+  /api/donations/donor/{publicKey}:
     get:
       tags: [Donations]
       summary: List donations by a donor
@@ -1866,7 +1565,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Profiles ─────────────────────────────────────────────────────────────────
-  /api/v1/profiles/{publicKey}:
+  /api/profiles/{publicKey}:
     get:
       tags: [Profiles]
       summary: Get donor profile
@@ -1898,7 +1597,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/profiles:
+  /api/profiles:
     post:
       tags: [Profiles]
       summary: Create or update donor profile
@@ -1939,7 +1638,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Leaderboard ──────────────────────────────────────────────────────────────
-  /api/v1/leaderboard:
+  /api/leaderboard:
     get:
       tags: [Leaderboard]
       summary: Get donor leaderboard
@@ -1987,7 +1686,7 @@ paths:
                           $ref: '#/components/schemas/LeaderboardEntry'
 
   # ── Updates ──────────────────────────────────────────────────────────────────
-  /api/v1/updates/{projectId}:
+  /api/updates/{projectId}:
     get:
       tags: [Updates]
       summary: List updates for a project
@@ -2029,7 +1728,7 @@ paths:
                         format: date-time
                         nullable: true
 
-  /api/v1/updates:
+  /api/updates:
     post:
       tags: [Updates]
       summary: Post a project update (admin)
@@ -2090,7 +1789,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/updates/{updateId}/translations/{language}:
+  /api/updates/{updateId}/translations/{language}:
     put:
       tags: [Updates]
       summary: Create or replace a pending update translation
@@ -2118,7 +1817,7 @@ paths:
       responses:
         '201': { description: Translation saved in pending moderation }
 
-  /api/v1/updates/{updateId}/translations/{language}/moderation:
+  /api/updates/{updateId}/translations/{language}/moderation:
     patch:
       tags: [Updates]
       summary: Moderate update translation content
@@ -2146,7 +1845,7 @@ paths:
         '200': { description: Translation moderation state updated }
         '400': { description: Human impact-claim review is required before approving machine translation }
 
-  /api/v1/updates/{updateId}/like:
+  /api/updates/{updateId}/like:
     post:
       tags: [Updates]
       summary: Toggle like on an update
@@ -2198,7 +1897,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/updates/{updateId}/likes:
+  /api/updates/{updateId}/likes:
     get:
       tags: [Updates]
       summary: Get like count and user like status for an update
@@ -2234,7 +1933,7 @@ paths:
                             type: boolean
 
   # ── Subscriptions ────────────────────────────────────────────────────────────
-  /api/v1/subscriptions:
+  /api/subscriptions:
     post:
       tags: [Subscriptions]
       summary: Subscribe to project updates
@@ -2293,7 +1992,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/subscriptions/{projectId}/count:
+  /api/subscriptions/{projectId}/count:
     get:
       tags: [Subscriptions]
       summary: Get subscriber count for a project
@@ -2322,7 +2021,7 @@ paths:
                             type: integer
 
   # ── Jobs ─────────────────────────────────────────────────────────────────────
-  /api/v1/jobs:
+  /api/jobs:
     get:
       tags: [Jobs]
       summary: List jobs
@@ -2350,7 +2049,7 @@ paths:
                         items:
                           $ref: '#/components/schemas/Job'
 
-  /api/v1/jobs/{id}:
+  /api/jobs/{id}:
     get:
       tags: [Jobs]
       summary: Get a job by ID
@@ -2381,7 +2080,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/jobs/{id}/release:
+  /api/jobs/{id}/release:
     patch:
       tags: [Jobs]
       summary: Release escrow for a job
@@ -2430,7 +2129,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Stats ─────────────────────────────────────────────────────────────────────
-  /api/v1/stats/global:
+  /api/stats/global:
     get:
       tags: [Stats]
       summary: Global platform statistics
@@ -2455,7 +2154,7 @@ paths:
                           totalCO2OffsetKg:
                             type: integer
 
-  /api/v1/stats/categories:
+  /api/stats/categories:
     get:
       tags: [Stats]
       summary: Active project count per category
@@ -2481,7 +2180,7 @@ paths:
                               type: integer
 
   # ── Impact ───────────────────────────────────────────────────────────────────
-  /api/v1/impact/project/{id}:
+  /api/impact/project/{id}:
     get:
       tags: [Impact]
       summary: Donation facts and evidence-backed claims for a project
@@ -2527,7 +2226,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/impact/global:
+  /api/impact/global:
     get:
       tags: [Impact]
       summary: Global donation facts and comparable claim groups
@@ -2570,7 +2269,7 @@ paths:
                                 verifiedClaimCount:
                                   type: integer
 
-  /api/v1/impact/donor/{publicKey}:
+  /api/impact/donor/{publicKey}:
     get:
       tags: [Impact]
       summary: Donation facts plus unallocated claims from supported projects
@@ -2613,7 +2312,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Ratings ──────────────────────────────────────────────────────────────────
-  /api/v1/ratings:
+  /api/ratings:
     post:
       tags: [Ratings]
       summary: Submit or update a project rating
@@ -2656,7 +2355,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/ratings/pending:
+  /api/ratings/pending:
     get:
       tags: [Ratings]
       summary: Get a project pending a rating from a donor
@@ -2695,7 +2394,7 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # ── Admin ────────────────────────────────────────────────────────────────────
-  /api/v1/admin/audit:
+  /api/admin/audit:
     get:
       tags: [Admin]
       summary: Query admin audit log

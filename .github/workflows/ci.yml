@@ -130,6 +130,8 @@ jobs:
           working-directory: backend
       - name: npm audit (fail on high/critical)
         run: npx --yes audit-ci@7.1.0 --high --package-manager npm
+      - name: OpenAPI compatibility (published v1 baseline)
+        run: npm run check:openapi && npm run check:api-compat
       - run: npm run lint
 
       # Deliberately WITHOUT REDIS_URL. Pointing the whole suite at a live Redis
@@ -160,6 +162,19 @@ jobs:
           name: backend-coverage-lcov
           path: backend/coverage/lcov.info
           retention-days: 7
+
+  mobile_api_compatibility:
+    name: Mobile (newer API tolerance)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-install
+        with:
+          working-directory: mobile
+      - run: npm test -- --runInBand __tests__/apiCompatibility.test.ts
 
   contracts:
     name: Soroban Contracts (Rust)
